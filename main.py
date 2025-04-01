@@ -9,9 +9,9 @@ from sklearn.metrics.pairwise import cosine_similarity
 # Default model
 MODEL_NAME = "VGG-Face"
 
-DB_DIR = "face_db"
-EMBED_FILE = os.path.join(DB_DIR, "embeddings.npy")
-META_FILE = os.path.join(DB_DIR, "metadata.pkl")
+TEMPLATE_DIR = "template_db"
+EMBED_FILE = os.path.join(TEMPLATE_DIR, "embeddings.npy")
+META_FILE = os.path.join(TEMPLATE_DIR, "metadata.pkl")
 
 # Get embedding size from model
 def get_embedding_size(model_name):
@@ -28,23 +28,57 @@ def get_embedding_size(model_name):
     }[model_name]
 
 # Initialize an empty database
+# Initialize the database by scanning existing images in template_dir
 def initialize_db(model_name=MODEL_NAME):
-    os.makedirs(DB_DIR, exist_ok=True)
+    os.makedirs(TEMPLATE_DIR, exist_ok=True)
 
     embedding_size = get_embedding_size(model_name)
-    if not os.path.exists(EMBED_FILE):
-        np.save(EMBED_FILE, np.empty((0, embedding_size)))
-    if not os.path.exists(META_FILE):
-        with open(META_FILE, "wb") as f:
-            pickle.dump([], f)
-    return f"Initialized empty face database (model: {model_name})"
+
+    if os.path.exists(EMBED_FILE) and os.path.exists(META_FILE):
+        return f"Database already initialized (model: {model_name})"
+
+    all_embeddings = []
+    all_metadata = []
+
+    # Walk through all subdirectories in TEMPLATE_DIR
+    for person_name in os.listdir(TEMPLATE_DIR):
+        person_dir = os.path.join(TEMPLATE_DIR, person_name)
+        if not os.path.isdir(person_dir):
+            continue
+
+        for img_name in os.listdir(person_dir):
+            if not img_name.lower().endswith((".jpg", ".jpeg", ".png")):
+                continue
+
+            img_path = os.path.join(person_dir, img_name)
+
+            # Compute embedding
+            try:
+                embedding = DeepFace.represent(
+                    img_path=img_path,
+                    model_name=model_name,
+                    enforce_detection=False
+                )[0]["embedding"]
+                all_embeddings.append(embedding)
+                all_metadata.append({"name": person_name, "path": img_path})
+            except Exception as e:
+                print(f"Failed to process {img_path}: {e}")
+
+    # Save to files
+    all_embeddings = np.array(all_embeddings).reshape(-1, embedding_size)
+    np.save(EMBED_FILE, all_embeddings)
+    with open(META_FILE, "wb") as f:
+        pickle.dump(all_metadata, f)
+
+    return f"Initialized face database with {len(all_metadata)} images (model: {model_name})"
+
 
 # Add image and its embedding to DB
 def add_to_db(image, name, model_name=MODEL_NAME):
-    person_dir = os.path.join(DB_DIR, name)
+    person_dir = os.path.join(TEMPLATE_DIR, name)
     os.makedirs(person_dir, exist_ok=True)
     img_count = len(os.listdir(person_dir))
-    img_path = os.path.join(person_dir, f"{name}_{img_count}.jpg")
+    img_path = os.path.join(person_dir, f"{name}_{img_count:04d}.jpg")
     image.save(img_path)
 
     # Get embedding
@@ -117,12 +151,13 @@ def main():
         img.save(temp_path)
 
         name, dist = find_match(temp_path)
-        st.write("Predicted Identity:", name)
+        st.write("Predicted Identity:", " ".join(name.split("_")))
         if dist is not None:
             st.write("Cosine Distance:", round(dist, 3))
 
     st.header("2. Add a New Face to the Database")
     new_name = st.text_input("Enter the name of the person")
+    new_name = "_".join(new_name.split())
     new_image = st.file_uploader("Upload an image to add to the database", type=["jpg", "jpeg", "png"], key="add_face")
     if new_image and new_name:
         img = Image.open(new_image).convert("RGB")
