@@ -26,7 +26,9 @@ def run_experiment():
                 "Actual": person,
                 "Predicted": predicted_name,
                 "Confidence": round(confidence, 3) if confidence else None,
-                "Correct": person == predicted_name
+                "Correct": person == predicted_name,
+                "Wrong_Unrecognized": predicted_name == "Unrecognized",
+                "Wrong_Prediction": predicted_name != "Unrecognized" and predicted_name != person
             })
 
     df = pd.DataFrame(results)
